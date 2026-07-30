@@ -1,0 +1,31 @@
+# ===========================================
+# Retail ETL Project - Dependencies
+# ===========================================
+# Data manipulation and analysis
+pandas==2.2.2
+numpy==1.26.4
+
+# Database connectivity
+sqlalchemy==2.0.30
+mysql-connector-python==8.4.0
+
+# Environment variable management
+python-dotenv==1.0.1
+
+# Excel file support
+openpyxl==3.1.2
+
+# Fake data generation (for testing)
+faker==25.2.0
+
+# Data display formatting
+tabulate==0.9.0
+
+# Colored terminal output
+colorama==0.4.6
+
+# Progress bar
+tqdm==4.66.4
+
+# Testing framework
+pytest==8.2.1
