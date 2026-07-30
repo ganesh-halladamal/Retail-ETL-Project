@@ -3,6 +3,8 @@
 -- File: create_tables.sql
 -- Purpose: Create all transactional tables
 -- Engine: InnoDB (supports transactions & FK)
+-- Requires: MySQL 8.0.16+ (for CHECK constraints)
+-- Reset: Run create_database.sql to drop & recreate
 -- ===========================================
 
 USE retail_oltp;
@@ -122,6 +124,11 @@ CREATE TABLE orders (
 -- ===========================================
 -- 9. ORDER_ITEMS TABLE
 -- Individual line items within an order
+-- discount_pct: percentage discount (0-100)
+-- tax_pct: tax percentage (e.g. 18 for GST)
+-- tax_amount: actual tax in currency
+-- net_amount: pre-tax line total
+-- line_total: tax-inclusive final amount
 -- ===========================================
 CREATE TABLE order_items (
     order_item_id   INT             AUTO_INCREMENT PRIMARY KEY,
@@ -129,8 +136,10 @@ CREATE TABLE order_items (
     product_id      INT             NOT NULL,
     quantity        INT             NOT NULL DEFAULT 1,
     unit_price      DECIMAL(10, 2)  NOT NULL,
-    discount        DECIMAL(5, 2)   NOT NULL DEFAULT 0.00,
-    tax             DECIMAL(5, 2)   NOT NULL DEFAULT 0.00,
+    discount_pct    DECIMAL(5, 2)   NOT NULL DEFAULT 0.00,
+    tax_pct         DECIMAL(5, 2)   NOT NULL DEFAULT 0.00,
+    net_amount      DECIMAL(10, 2)  NOT NULL,
+    tax_amount      DECIMAL(10, 2)  NOT NULL,
     line_total      DECIMAL(10, 2)  NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

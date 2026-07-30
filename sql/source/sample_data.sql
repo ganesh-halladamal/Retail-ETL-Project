@@ -2,13 +2,18 @@
 -- Retail ETL Project - Source OLTP Database
 -- File: sample_data.sql
 -- Purpose: Insert realistic sample data
--- Maintains referential integrity
+-- Maintains referential integrity via insert order
+-- IMPORTANT: This file uses DELIMITER blocks for
+--   stored procedures. It must be executed via:
+--   - MySQL Workbench (open and execute)
+--   - mysql command-line client
+--   It CANNOT be executed via SQLAlchemy or
+--   mysql-connector-python directly.
+-- Requires: MySQL 8.0.16+
+-- Reset: Run create_database.sql first
 -- ===========================================
 
 USE retail_oltp;
-
--- Disable FK checks for bulk insert performance
-SET FOREIGN_KEY_CHECKS = 0;
 
 -- ===========================================
 -- CATEGORIES (10 records)
@@ -262,7 +267,8 @@ INSERT INTO customers (first_name, last_name, gender, email, phone, date_of_birt
 ('Falak', 'Mehra', 'Female', 'falak.mehra@outlook.com', '9100000100', '1993-01-15', 'Mumbai', 'Maharashtra', 'India', '2023-06-15', 'Active');
 
 -- ===========================================
--- INVENTORY (50 records - one per product per random store)
+-- INVENTORY (60 records - products 1-10 get 2 stores each,
+-- products 11-50 get 1 store each)
 -- ===========================================
 INSERT INTO inventory (product_id, store_id, stock_quantity, last_updated) VALUES
 (1, 1, 25, '2024-06-01 10:00:00'), (1, 2, 18, '2024-06-01 10:00:00'),
@@ -347,6 +353,11 @@ DROP PROCEDURE IF EXISTS generate_orders;
 -- ===========================================
 -- ORDER_ITEMS (~1000 records)
 -- Each order gets 1-3 items (ensures all orders have items)
+-- discount_pct: percentage discount applied
+-- tax_pct: GST percentage (18%)
+-- net_amount: qty * unit_price * (1 - discount_pct/100)
+-- tax_amount: net_amount * tax_pct / 100
+-- line_total: net_amount + tax_amount
 -- ===========================================
 DELIMITER //
 CREATE PROCEDURE generate_order_items()
@@ -355,8 +366,10 @@ BEGIN
     DECLARE v_product_id INT;
     DECLARE v_quantity INT;
     DECLARE v_unit_price DECIMAL(10,2);
-    DECLARE v_discount DECIMAL(5,2);
-    DECLARE v_tax DECIMAL(5,2);
+    DECLARE v_discount_pct DECIMAL(5,2);
+    DECLARE v_tax_pct DECIMAL(5,2);
+    DECLARE v_net_amount DECIMAL(10,2);
+    DECLARE v_tax_amount DECIMAL(10,2);
     DECLARE v_line_total DECIMAL(10,2);
     DECLARE v_items_per_order INT;
     DECLARE j INT;
@@ -376,16 +389,20 @@ BEGIN
             FROM products WHERE product_id = v_product_id;
             
             -- Random discount 0-15%
-            SET v_discount = ROUND(RAND() * 15, 2);
+            SET v_discount_pct = ROUND(RAND() * 15, 2);
             -- Tax 18% GST
-            SET v_tax = 18.00;
-            -- Calculate line total
-            SET v_line_total = ROUND(
-                v_quantity * v_unit_price * (1 - v_discount/100) * (1 + v_tax/100), 2
+            SET v_tax_pct = 18.00;
+            -- Calculate net amount (pre-tax)
+            SET v_net_amount = ROUND(
+                v_quantity * v_unit_price * (1 - v_discount_pct/100), 2
             );
+            -- Calculate tax amount
+            SET v_tax_amount = ROUND(v_net_amount * v_tax_pct / 100, 2);
+            -- Line total = net + tax
+            SET v_line_total = v_net_amount + v_tax_amount;
             
-            INSERT INTO order_items (order_id, product_id, quantity, unit_price, discount, tax, line_total)
-            VALUES (v_order_id, v_product_id, v_quantity, v_unit_price, v_discount, v_tax, v_line_total);
+            INSERT INTO order_items (order_id, product_id, quantity, unit_price, discount_pct, tax_pct, net_amount, tax_amount, line_total)
+            VALUES (v_order_id, v_product_id, v_quantity, v_unit_price, v_discount_pct, v_tax_pct, v_net_amount, v_tax_amount, v_line_total);
             
             SET j = j + 1;
         END WHILE;
@@ -573,9 +590,9 @@ DELIMITER ;
 CALL generate_returns();
 DROP PROCEDURE IF EXISTS generate_returns;
 
--- Re-enable FK checks
-SET FOREIGN_KEY_CHECKS = 1;
-
+-- ===========================================
+-- VERIFICATION QUERIES
+-- ===========================================
 SELECT 'Sample data inserted successfully.' AS status;
 SELECT COUNT(*) AS total_customers FROM customers;
 SELECT COUNT(*) AS total_products FROM products;
@@ -584,3 +601,12 @@ SELECT COUNT(*) AS total_order_items FROM order_items;
 SELECT COUNT(*) AS total_payments FROM payments;
 SELECT COUNT(*) AS total_shipments FROM shipments;
 SELECT COUNT(*) AS total_returns FROM returns;
+
+-- Referential integrity check (should all return 0)
+SELECT COUNT(*) AS orphan_orders_no_items
+FROM orders o LEFT JOIN order_items oi ON o.order_id = oi.order_id
+WHERE oi.order_item_id IS NULL;
+
+SELECT COUNT(*) AS orphan_orders_no_payments
+FROM orders o LEFT JOIN payments p ON o.order_id = p.order_id
+WHERE p.payment_id IS NULL AND o.total_amount > 0;

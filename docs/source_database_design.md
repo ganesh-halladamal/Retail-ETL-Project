@@ -2,6 +2,10 @@
 
 ## Database: `retail_oltp`
 
+## Requirements
+
+- **MySQL 8.0.16+** (CHECK constraints are only enforced from this version; earlier versions parse but silently ignore them)
+
 ## Overview
 
 This document describes the transactional (OLTP) database that serves as the **source system** for our Retail ETL Pipeline. The database is designed to simulate a real-world e-commerce/retail company similar to Amazon, Flipkart, or Reliance Digital.
@@ -112,14 +116,16 @@ erDiagram
         int product_id FK
         int quantity
         decimal unit_price
-        decimal discount
-        decimal tax
+        decimal discount_pct
+        decimal tax_pct
+        decimal net_amount
+        decimal tax_amount
         decimal line_total
     }
 
     PAYMENTS {
         int payment_id PK
-        int order_id FK
+        int order_id FK_UK
         enum payment_method
         enum payment_status
         datetime payment_date
@@ -128,7 +134,7 @@ erDiagram
 
     SHIPMENTS {
         int shipment_id PK
-        int order_id FK
+        int order_id FK_UK
         varchar shipping_partner
         varchar tracking_number UK
         date shipment_date
@@ -138,7 +144,7 @@ erDiagram
 
     RETURNS {
         int return_id PK
-        int order_item_id FK
+        int order_item_id FK_UK
         varchar return_reason
         date return_date
         decimal refund_amount
@@ -149,21 +155,21 @@ erDiagram
 
 ## Table Relationships
 
-| Parent Table | Child Table | Relationship | FK Column |
-|---|---|---|---|
-| customers | orders | One-to-Many | customer_id |
-| stores | orders | One-to-Many | store_id |
-| employees | orders | One-to-Many | employee_id |
-| stores | employees | One-to-Many | store_id |
-| categories | products | One-to-Many | category_id |
-| suppliers | products | One-to-Many | supplier_id |
-| orders | order_items | One-to-Many | order_id |
-| products | order_items | One-to-Many | product_id |
-| orders | payments | One-to-One | order_id |
-| orders | shipments | One-to-One | order_id |
-| order_items | returns | One-to-One | order_item_id |
-| products | inventory | One-to-Many | product_id |
-| stores | inventory | One-to-Many | store_id |
+| Parent Table | Child Table | Relationship | FK Column | Enforced By |
+|---|---|---|---|---|
+| customers | orders | One-to-Many | customer_id | FK |
+| stores | orders | One-to-Many | store_id | FK |
+| employees | orders | One-to-Many | employee_id | FK |
+| stores | employees | One-to-Many | store_id | FK |
+| categories | products | One-to-Many | category_id | FK |
+| suppliers | products | One-to-Many | supplier_id | FK |
+| orders | order_items | One-to-Many | order_id | FK |
+| products | order_items | One-to-Many | product_id | FK |
+| orders | payments | **One-to-One** | order_id | FK + UNIQUE |
+| orders | shipments | **One-to-One** | order_id | FK + UNIQUE |
+| order_items | returns | **One-to-One** | order_item_id | FK + UNIQUE |
+| products | inventory | One-to-Many (unique grain) | product_id | FK + UNIQUE(product_id, store_id) |
+| stores | inventory | One-to-Many (unique grain) | store_id | FK + UNIQUE(product_id, store_id) |
 
 ---
 
@@ -188,22 +194,29 @@ Physical retail locations. Each order and employee belongs to a store. Supports 
 Store staff who process orders. Enables employee performance tracking, workload analysis, and payroll.
 
 ### 7. `inventory`
-Real-time stock levels per product per store. Supports stock alerts, reorder point calculations, and availability checks.
+Stock levels per product per store. The `UNIQUE(product_id, store_id)` constraint enforces the grain — exactly one row per product per store.
 
 ### 8. `orders`
-The core transaction table. Records every customer purchase with timestamp, status, and total amount.
+The core transaction table. Records every customer purchase with timestamp, status, and total amount. Note: `total_amount` is tax-inclusive (sum of `line_total` from order_items).
 
 ### 9. `order_items`
-Line-level detail for each order. Stores product, quantity, pricing, discount, and tax per item. Enables product-level sales analysis.
+Line-level detail for each order. Key columns:
+- `discount_pct`: percentage discount (0-100), named explicitly to avoid confusion with currency amounts
+- `tax_pct`: tax percentage (e.g., 18 for GST), bounded 0-100
+- `net_amount`: pre-tax amount = `quantity * unit_price * (1 - discount_pct/100)`
+- `tax_amount`: tax in currency = `net_amount * tax_pct / 100`
+- `line_total`: final amount = `net_amount + tax_amount`
+
+This split enables the warehouse to report net revenue, tax liability, and gross revenue independently.
 
 ### 10. `payments`
-Payment records associated with orders. Tracks payment method, status, and amount. Supports financial reconciliation.
+One payment per order (enforced by UNIQUE on `order_id`). Tracks payment method, status, and amount. `amount_paid` equals `orders.total_amount` (tax-inclusive). Cancelled/Returned orders have status 'Refunded'.
 
 ### 11. `shipments`
-Delivery tracking for orders. Stores carrier info, tracking numbers, and delivery dates. Supports logistics analysis.
+One shipment per order (enforced by UNIQUE on `order_id`). Only exists for orders with status Shipped, Delivered, or Returned.
 
 ### 12. `returns`
-Records product returns at the item level. Captures reason and refund amount. Supports return rate analysis and quality tracking.
+One return per order item (enforced by UNIQUE on `order_item_id`). Only exists for items in orders with status 'Returned'. `refund_amount` equals the item's `line_total`.
 
 ---
 
@@ -237,8 +250,6 @@ This database is designed to **Third Normal Form (3NF)**:
 
 ## How This Database Supports ETL
 
-This OLTP database is specifically designed as the **source system** for our ETL pipeline:
-
 ### Extract Phase
 - Clean, well-structured tables make extraction straightforward
 - Primary keys provide reliable row identification
@@ -247,16 +258,18 @@ This OLTP database is specifically designed as the **source system** for our ETL
 
 ### Transform Phase
 - Normalized structure requires JOINs, which the Transform layer will denormalize
-- Price/cost columns enable margin calculations
+- `net_amount` / `tax_amount` / `line_total` split enables clean revenue calculations
+- `discount_pct` / `tax_pct` naming prevents percent-vs-amount confusion
 - Geographic data (city, state) supports regional aggregation
 - Date columns support time-based dimension building
+- **Note:** Cancelled/Returned orders retain their `total_amount`; the transform layer must filter by `order_status` to exclude them from revenue calculations
 
 ### Load Phase (Target: Data Warehouse)
 - Customer data → `dim_customer` (SCD Type 2)
 - Product + Category + Supplier → `dim_product`
 - Store data → `dim_store`
 - Date columns → `dim_date`
-- Orders + Items + Payments → `fact_sales`
+- Orders + Items + Payments → `fact_sales` (using `net_amount` for revenue, `tax_amount` for tax)
 - Returns → `fact_returns`
 - Inventory → `fact_inventory_snapshot`
 
@@ -267,12 +280,13 @@ This OLTP database is specifically designed as the **source system** for our ETL
 4. **Datetime columns** — Enable incremental/delta loads
 5. **Decimal precision** — Financial accuracy preserved through pipeline
 6. **InnoDB engine** — Consistent reads during extraction (MVCC)
+7. **Separate net/tax/total** — Warehouse can report any revenue slice directly
 
 ---
 
 ## Sample Data Summary
 
-| Table | Record Count | Notes |
+| Table | Expected Count | Notes |
 |---|---|---|
 | customers | 100 | Realistic Indian names, multiple cities |
 | categories | 10 | Standard retail categories |
@@ -280,12 +294,12 @@ This OLTP database is specifically designed as the **source system** for our ETL
 | products | 50 | 5 per category with real brands |
 | stores | 5 | Major Indian cities |
 | employees | 20 | 4 per store |
-| inventory | 60 | Stock levels per product/store |
+| inventory | 60 | Products 1-10 get 2 stores, 11-50 get 1 store |
 | orders | 500 | Distributed across 2024 |
-| order_items | ~1000 | 1-4 items per order |
-| payments | 500 | One per order |
-| shipments | ~300 | For shipped/delivered orders |
-| returns | ~40-80 | For returned order items |
+| order_items | ~1000 | 1-3 items per order (avg 2.0) |
+| payments | ~500 | One per order (skips any with zero total) |
+| shipments | ~340 | For Shipped, Delivered, and Returned orders |
+| returns | ~80-120 | One per item in Returned orders |
 
 ---
 
@@ -293,38 +307,50 @@ This OLTP database is specifically designed as the **source system** for our ETL
 
 | File | Purpose |
 |---|---|
-| `create_database.sql` | Creates the `retail_oltp` database |
+| `create_database.sql` | Drops (if exists) and creates `retail_oltp` — the only reset path |
 | `create_tables.sql` | Creates all 12 tables with proper data types |
 | `constraints.sql` | Adds FK, UNIQUE, and CHECK constraints |
-| `indexes.sql` | Creates performance indexes |
-| `sample_data.sql` | Inserts realistic sample data |
+| `indexes.sql` | Creates non-redundant performance indexes (FK indexes excluded) |
+| `sample_data.sql` | Inserts realistic sample data via stored procedures |
 
 ### Execution Order
 
-```bash
-mysql -u root -p < sql/source/create_database.sql
-mysql -u root -p retail_oltp < sql/source/create_tables.sql
-mysql -u root -p retail_oltp < sql/source/constraints.sql
-mysql -u root -p retail_oltp < sql/source/indexes.sql
-mysql -u root -p retail_oltp < sql/source/sample_data.sql
+Run in MySQL Workbench or mysql CLI (in order):
+
+```sql
+-- 1. Create database (drops existing!)
+source sql/source/create_database.sql
+
+-- 2. Create tables
+source sql/source/create_tables.sql
+
+-- 3. Add constraints
+source sql/source/constraints.sql
+
+-- 4. Add indexes
+source sql/source/indexes.sql
+
+-- 5. Insert sample data
+source sql/source/sample_data.sql
 ```
 
-Or combined:
-```bash
-mysql -u root -p < sql/source/create_database.sql
-mysql -u root -p retail_oltp < sql/source/create_tables.sql
-mysql -u root -p retail_oltp < sql/source/constraints.sql
-mysql -u root -p retail_oltp < sql/source/indexes.sql
-mysql -u root -p retail_oltp < sql/source/sample_data.sql
-```
+> **Important:** `sample_data.sql` uses `DELIMITER` blocks for stored procedures.
+> It can only be executed via MySQL Workbench or the `mysql` command-line client.
+> It **cannot** be executed through SQLAlchemy or mysql-connector-python.
+
+> **Re-runnable:** Only `create_database.sql` is re-runnable (it drops everything).
+> All other scripts fail on a second run due to duplicate objects.
 
 ---
 
 ## Design Principles Applied
 
 1. **Referential Integrity** — All FKs enforced with appropriate ON UPDATE/DELETE actions
-2. **Data Validation** — CHECK constraints prevent invalid data entry
-3. **Performance** — Indexes on commonly queried columns (dates, FKs, status)
-4. **Scalability** — AUTO_INCREMENT, InnoDB engine, proper indexing
-5. **Real-World Simulation** — Data patterns mirror actual e-commerce operations
-6. **ETL-Ready** — Timestamps, status fields, and clean structure for pipeline extraction
+2. **One-to-One enforcement** — UNIQUE constraints on payments.order_id, shipments.order_id, returns.order_item_id
+3. **Grain enforcement** — UNIQUE(product_id, store_id) on inventory prevents duplicate stock rows
+4. **Data Validation** — CHECK constraints prevent invalid data (MySQL 8.0.16+ required)
+5. **Clear naming** — `discount_pct`/`tax_pct` for percentages, `net_amount`/`tax_amount`/`line_total` for currency
+6. **No redundant indexes** — FK-backed indexes are not duplicated in indexes.sql
+7. **Performance** — Indexes on commonly queried non-FK columns (dates, status, names)
+8. **Scalability** — AUTO_INCREMENT, InnoDB engine, proper indexing
+9. **ETL-Ready** — Timestamps, status fields, net/tax split for clean warehouse loading

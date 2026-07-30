@@ -2,6 +2,13 @@
 -- Retail ETL Project - Source OLTP Database
 -- File: indexes.sql
 -- Purpose: Create indexes for query performance
+-- Note: Run AFTER constraints.sql. Only indexes
+--       NOT already created by FK constraints
+--       are included here to avoid redundancy.
+-- Note: MySQL auto-creates indexes for FK columns,
+--       so this file only adds non-FK indexes.
+-- Requires: MySQL 8.0.16+ (for CHECK constraint enforcement)
+-- Reset: Run create_database.sql to drop & recreate
 -- ===========================================
 
 USE retail_oltp;
@@ -27,6 +34,7 @@ CREATE INDEX idx_customers_reg_date
 
 -- ===========================================
 -- PRODUCTS INDEXES
+-- (category_id and supplier_id already indexed by FK)
 -- ===========================================
 -- Search by product name
 CREATE INDEX idx_products_name
@@ -36,63 +44,32 @@ CREATE INDEX idx_products_name
 CREATE INDEX idx_products_brand
     ON products(brand);
 
--- Filter by category (joins with categories)
-CREATE INDEX idx_products_category
-    ON products(category_id);
-
--- Filter by supplier
-CREATE INDEX idx_products_supplier
-    ON products(supplier_id);
-
 -- Filter by status
 CREATE INDEX idx_products_status
     ON products(status);
 
 -- ===========================================
 -- ORDERS INDEXES
+-- (customer_id, store_id, employee_id already indexed by FK)
 -- ===========================================
--- Filter by customer (customer order history)
-CREATE INDEX idx_orders_customer
-    ON orders(customer_id);
-
--- Filter by store
-CREATE INDEX idx_orders_store
-    ON orders(store_id);
-
--- Filter by employee
-CREATE INDEX idx_orders_employee
-    ON orders(employee_id);
-
--- Filter by order date (date range reports)
-CREATE INDEX idx_orders_date
-    ON orders(order_date);
-
--- Filter by status
-CREATE INDEX idx_orders_status
-    ON orders(order_status);
-
--- Composite: date + status (common report query)
+-- Composite: date + status (covers date-only and date+status queries)
 CREATE INDEX idx_orders_date_status
     ON orders(order_date, order_status);
 
+-- Filter by status alone
+CREATE INDEX idx_orders_status
+    ON orders(order_status);
+
 -- ===========================================
 -- ORDER_ITEMS INDEXES
+-- (order_id and product_id already indexed by FK)
 -- ===========================================
--- Filter by order (order details lookup)
-CREATE INDEX idx_order_items_order
-    ON order_items(order_id);
-
--- Filter by product (product sales analysis)
-CREATE INDEX idx_order_items_product
-    ON order_items(product_id);
+-- No additional indexes needed; FK indexes cover lookups
 
 -- ===========================================
 -- PAYMENTS INDEXES
+-- (order_id already indexed by FK)
 -- ===========================================
--- Filter by order
-CREATE INDEX idx_payments_order
-    ON payments(order_id);
-
 -- Filter by payment date
 CREATE INDEX idx_payments_date
     ON payments(payment_date);
@@ -106,27 +83,9 @@ CREATE INDEX idx_payments_status
     ON payments(payment_status);
 
 -- ===========================================
--- INVENTORY INDEXES
--- ===========================================
--- Filter by product
-CREATE INDEX idx_inventory_product
-    ON inventory(product_id);
-
--- Filter by store
-CREATE INDEX idx_inventory_store
-    ON inventory(store_id);
-
--- Composite: product + store (stock lookup)
-CREATE INDEX idx_inventory_product_store
-    ON inventory(product_id, store_id);
-
--- ===========================================
 -- SHIPMENTS INDEXES
+-- (order_id already indexed by FK)
 -- ===========================================
--- Filter by order
-CREATE INDEX idx_shipments_order
-    ON shipments(order_id);
-
 -- Filter by status
 CREATE INDEX idx_shipments_status
     ON shipments(shipment_status);
@@ -137,22 +96,16 @@ CREATE INDEX idx_shipments_date
 
 -- ===========================================
 -- RETURNS INDEXES
+-- (order_item_id already indexed by FK)
 -- ===========================================
--- Filter by order item
-CREATE INDEX idx_returns_order_item
-    ON returns(order_item_id);
-
 -- Filter by return date
 CREATE INDEX idx_returns_date
     ON returns(return_date);
 
 -- ===========================================
 -- EMPLOYEES INDEXES
+-- (store_id already indexed by FK)
 -- ===========================================
--- Filter by store
-CREATE INDEX idx_employees_store
-    ON employees(store_id);
-
 -- Filter by designation
 CREATE INDEX idx_employees_designation
     ON employees(designation);

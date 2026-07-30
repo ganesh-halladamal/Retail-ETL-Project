@@ -4,13 +4,31 @@ Retail ETL Project - Configuration Module
 ===========================================
 This module loads environment variables from .env file
 and provides database configuration for the ETL pipeline.
+
+Requires: MySQL 8.0.16+
 """
 
 import os
 from dotenv import load_dotenv
+from sqlalchemy.engine import URL
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def _get_env(key: str, default: str = "") -> str:
+    """
+    Get environment variable, treating empty string same as unset.
+
+    Args:
+        key: Environment variable name
+        default: Fallback value if key is unset or empty
+
+    Returns:
+        str: The value or default
+    """
+    value = os.getenv(key, "")
+    return value if value else default
 
 
 def get_db_config() -> dict:
@@ -20,34 +38,51 @@ def get_db_config() -> dict:
 
     Returns:
         dict: Database connection parameters
+
+    Raises:
+        ValueError: If DB_PORT is not a valid integer
     """
+    port_str = _get_env("DB_PORT", "3306")
+    try:
+        port = int(port_str)
+    except ValueError:
+        raise ValueError(
+            f"DB_PORT must be a valid integer, got: '{port_str}'"
+        )
+
     db_config: dict = {
-        "host": os.getenv("DB_HOST", "localhost"),
-        "port": int(os.getenv("DB_PORT", "3306")),
-        "user": os.getenv("DB_USER", "root"),
-        "password": os.getenv("DB_PASSWORD", ""),
-        "source_db": os.getenv("SOURCE_DB", ""),
-        "warehouse_db": os.getenv("WAREHOUSE_DB", ""),
+        "host": _get_env("DB_HOST", "localhost"),
+        "port": port,
+        "user": _get_env("DB_USER", "etl_user"),
+        "password": _get_env("DB_PASSWORD", ""),
+        "source_db": _get_env("SOURCE_DB", "retail_oltp"),
+        "warehouse_db": _get_env("WAREHOUSE_DB", "retail_dwh"),
     }
     return db_config
 
 
-def get_connection_string(db_name: str) -> str:
+def get_connection_string(db_name: str) -> URL:
     """
-    Generates SQLAlchemy connection string for MySQL.
+    Generates SQLAlchemy connection URL for MySQL.
+    Uses URL.create() for proper credential encoding
+    (handles special chars like @, :, /, # in passwords).
 
     Args:
         db_name: Name of the database to connect to
 
     Returns:
-        str: SQLAlchemy-compatible connection URL
+        sqlalchemy.engine.URL: Safe connection URL object
     """
     config = get_db_config()
-    connection_string: str = (
-        f"mysql+mysqlconnector://{config['user']}:{config['password']}"
-        f"@{config['host']}:{config['port']}/{db_name}"
+    connection_url: URL = URL.create(
+        drivername="mysql+mysqlconnector",
+        username=config["user"],
+        password=config["password"],
+        host=config["host"],
+        port=config["port"],
+        database=db_name,
     )
-    return connection_string
+    return connection_url
 
 
 # ===========================================

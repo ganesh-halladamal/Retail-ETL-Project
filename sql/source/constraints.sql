@@ -2,6 +2,8 @@
 -- Retail ETL Project - Source OLTP Database
 -- File: constraints.sql
 -- Purpose: Add FK, UNIQUE, and CHECK constraints
+-- Requires: MySQL 8.0.16+ (CHECK enforcement)
+-- Reset: Run create_database.sql to drop & recreate
 -- ===========================================
 
 USE retail_oltp;
@@ -21,6 +23,22 @@ ALTER TABLE suppliers
 -- Shipment tracking number must be unique
 ALTER TABLE shipments
     ADD CONSTRAINT uq_shipments_tracking UNIQUE (tracking_number);
+
+-- One payment per order (enforces 1:1 relationship)
+ALTER TABLE payments
+    ADD CONSTRAINT uq_payments_order UNIQUE (order_id);
+
+-- One shipment per order (enforces 1:1 relationship)
+ALTER TABLE shipments
+    ADD CONSTRAINT uq_shipments_order UNIQUE (order_id);
+
+-- One return per order item (enforces 1:1 relationship)
+ALTER TABLE returns
+    ADD CONSTRAINT uq_returns_order_item UNIQUE (order_item_id);
+
+-- One inventory row per product per store (enforces grain)
+ALTER TABLE inventory
+    ADD CONSTRAINT uq_inventory_product_store UNIQUE (product_id, store_id);
 
 -- ===========================================
 -- FOREIGN KEY CONSTRAINTS
@@ -105,7 +123,7 @@ ALTER TABLE returns
     ON UPDATE CASCADE ON DELETE CASCADE;
 
 -- ===========================================
--- CHECK CONSTRAINTS
+-- CHECK CONSTRAINTS (MySQL 8.0.16+ required)
 -- ===========================================
 
 -- Products: unit_price must be positive
@@ -133,15 +151,15 @@ ALTER TABLE order_items
     ADD CONSTRAINT chk_order_items_quantity
     CHECK (quantity >= 1);
 
--- Order Items: discount between 0 and 100
+-- Order Items: discount_pct between 0 and 100
 ALTER TABLE order_items
     ADD CONSTRAINT chk_order_items_discount
-    CHECK (discount >= 0 AND discount <= 100);
+    CHECK (discount_pct >= 0 AND discount_pct <= 100);
 
--- Order Items: tax must be non-negative
+-- Order Items: tax_pct between 0 and 100
 ALTER TABLE order_items
     ADD CONSTRAINT chk_order_items_tax
-    CHECK (tax >= 0);
+    CHECK (tax_pct >= 0 AND tax_pct <= 100);
 
 -- Payments: amount must be positive
 ALTER TABLE payments

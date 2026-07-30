@@ -20,6 +20,16 @@ __pycache__/
 logs/*.log
 *.log
 
+# Data landing zones (may contain PII)
+data/raw/*
+data/processed/*
+data/archive/*
+reject/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/archive/.gitkeep
+!reject/.gitkeep
+
 # IDE settings
 .idea/
 .vscode/
