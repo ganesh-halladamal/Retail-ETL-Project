@@ -7,25 +7,44 @@ correctly with expected counts and no orphan rows.
 
 Run: pytest tests/test_source_db.py -v
 Requires: retail_oltp database populated with sample data.
+
+If the database is unavailable (e.g. fresh clone, CI without
+a DB service), all tests are skipped rather than erroring.
 """
 
 import pytest
 from sqlalchemy import create_engine, text
-from config import get_connection_string
+from sqlalchemy.exc import OperationalError
+from config import get_connection_string, get_db_config
 
 
 @pytest.fixture(scope="module")
 def engine():
-    """Create SQLAlchemy engine for retail_oltp."""
-    url = get_connection_string("retail_oltp")
+    """
+    Create SQLAlchemy engine using the source_db from config.
+    Skips the entire module if the database is unreachable
+    (e.g. fresh clone, CI without a running MySQL instance).
+    """
+    config = get_db_config()
+    url = get_connection_string(config["source_db"])
     eng = create_engine(url)
+    try:
+        # Eagerly test connectivity so we skip early, not mid-suite
+        with eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except OperationalError as exc:
+        eng.dispose()
+        pytest.skip(
+            f"retail_oltp database not reachable — skipping all tests. "
+            f"Reason: {exc.orig}"
+        )
     yield eng
     eng.dispose()
 
 
 @pytest.fixture(scope="module")
 def connection(engine):
-    """Provide a database connection."""
+    """Provide a database connection for the test module."""
     with engine.connect() as conn:
         yield conn
 
@@ -82,17 +101,23 @@ class TestRowCounts:
         assert count == 60
 
     def test_order_items_count(self, connection) -> None:
-        """Order items should be approximately 1000 (500 orders * avg 2 items)."""
+        """
+        Order items average 2.0 per order (FLOOR(1 + RAND() * 3) yields 1-3).
+        Expected total is ~1000; assertion range is 800-1200.
+        """
         count = connection.execute(text("SELECT COUNT(*) FROM order_items")).scalar()
         assert 800 <= count <= 1200, f"Expected ~1000 order items, got {count}"
 
     def test_payments_count(self, connection) -> None:
-        """Each order with items should have exactly one payment."""
+        """One payment per order (enforced by UNIQUE on order_id)."""
         count = connection.execute(text("SELECT COUNT(*) FROM payments")).scalar()
         assert 450 <= count <= 500, f"Expected ~500 payments, got {count}"
 
     def test_shipments_count(self, connection) -> None:
-        """Shipments for Shipped + Delivered + Returned orders (~60% of 500)."""
+        """
+        Shipments generated for Shipped + Delivered + Returned orders.
+        With ~45% Delivered, ~15% Shipped, ~8% Returned → ~340 expected.
+        """
         count = connection.execute(text("SELECT COUNT(*) FROM shipments")).scalar()
         assert 250 <= count <= 400, f"Expected ~340 shipments, got {count}"
 
@@ -115,7 +140,7 @@ class TestReferentialIntegrity:
         assert result.scalar() == 0, "Found orders without any order items"
 
     def test_no_orders_without_payments(self, connection) -> None:
-        """Every order with total > 0 should have a payment."""
+        """Every order with total > 0 should have exactly one payment."""
         result = connection.execute(text("""
             SELECT COUNT(*) FROM orders o
             LEFT JOIN payments p ON o.order_id = p.order_id
