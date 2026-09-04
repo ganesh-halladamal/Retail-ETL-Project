@@ -1,0 +1,50 @@
+# ===========================================
+# Retail ETL Project - Git Ignore
+# ===========================================
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables (sensitive data)
+.env
+
+# Log files
+logs/*.log
+*.log
+
+# Data landing zones (may contain PII)
+data/raw/*
+data/processed/*
+data/archive/*
+reject/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/archive/.gitkeep
+!reject/.gitkeep
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Byte-compiled / optimized files
+*.py[cod]
+*$py.class
