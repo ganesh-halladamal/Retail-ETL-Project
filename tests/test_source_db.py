@@ -14,7 +14,7 @@ a DB service), all tests are skipped rather than erroring.
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 from config import get_connection_string, get_db_config
 
 
@@ -29,14 +29,16 @@ def engine():
     url = get_connection_string(config["source_db"])
     eng = create_engine(url)
     try:
-        # Eagerly test connectivity so we skip early, not mid-suite
+        # Eagerly test connectivity so we skip early, not mid-suite.
+        # SQLAlchemyError is the correct base: mysql-connector surfaces an
+        # unreachable server as DatabaseError, not OperationalError.
         with eng.connect() as conn:
             conn.execute(text("SELECT 1"))
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         eng.dispose()
         pytest.skip(
-            f"retail_oltp database not reachable — skipping all tests. "
-            f"Reason: {exc.orig}"
+            f"retail_oltp database not reachable - skipping all tests. "
+            f"Reason: {exc}"
         )
     yield eng
     eng.dispose()

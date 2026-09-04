@@ -111,27 +111,83 @@ Run in MySQL Workbench (in order):
 > **Reset:** To start fresh, run `create_database.sql` which drops and recreates
 > the database. None of the other scripts are re-runnable without this reset.
 
-### 6. Run the Project
+### 6. Run the Extraction Layer
 
 ```bash
 python main.py
 ```
 
+This connects to `retail_oltp`, extracts all 12 tables into DataFrames, and writes UTF-8 CSV snapshots to `data/raw/`.
+
+### 7. Run Data Profiling & Quality Assessment
+
+```bash
+python -m profiling.profile_runner
+```
+
+Profile a single table:
+```bash
+python -m profiling.profile_runner --table customers
+```
+
+With verbose console output:
+```bash
+python -m profiling.profile_runner --verbose
+```
+
+Reports are written to `data/profiling/`. The HTML report is at:
+```
+data/profiling/reports/data_quality_report.html
+```
+
 ## Expected Output
 
 ```
-===========================================
-       Retail ETL Project v1.0.0
-  Project Initialized Successfully
-===========================================
+============================================================
+  Retail ETL Project v1.0.0 - Extraction Layer
+============================================================
+[INFO] Host:         localhost:3306
+[INFO] Source DB:    retail_oltp
+[INFO] Log file:     logs/extract.log
 
-[INFO] Database Host: localhost
-[INFO] Database Port: 3306
-[INFO] Source DB: retail_oltp
-[INFO] Warehouse DB: retail_dwh
+Extracting source tables...
+  [OK] categories     rows=    10  cols= 3  time=0.021s
+  [OK] suppliers      rows=    10  cols= 7  time=0.004s
+  [OK] stores         rows=     5  cols= 6  time=0.003s
+  [OK] products       rows=    50  cols= 9  time=0.005s
+  [OK] employees      rows=    20  cols= 7  time=0.004s
+  [OK] customers      rows=   100  cols=12  time=0.008s
+  [OK] inventory      rows=    60  cols= 5  time=0.005s
+  [OK] orders         rows=   500  cols= 7  time=0.018s
+  [OK] order_items    rows=  1193  cols=10  time=0.042s
+  [OK] payments       rows=   907  cols= 6  time=0.031s
+  [OK] shipments      rows=   331  cols= 7  time=0.014s
+  [OK] returns        rows=   102  cols= 5  time=0.007s
 
-[SUCCESS] Project setup complete. Ready for ETL development.
+Extraction Summary
+| table       | rows | columns | status |
+|-------------|------|---------|--------|
+| categories  |   10 |       3 | OK     |
+| ...         |  ... |     ... | ...    |
+
+[INFO] Tables extracted: 12/12
+[INFO] Total rows:       3,288
+[INFO] CSV output:       data/raw/
+
+[SUCCESS] Extraction completed.
 ```
+
+> Row counts vary between loads because the sample data generators are randomised.
+
+## Pipeline Stages
+
+| Stage | Status | Docs |
+|---|---|---|
+| Source OLTP database | ✅ Complete | [docs/source_database_design.md](docs/source_database_design.md) |
+| Extraction layer | ✅ Complete | [extract/README.md](extract/README.md) |
+| Data Profiling & Quality Assessment | ✅ Complete | [docs/data_profiling.md](docs/data_profiling.md) |
+| Transformation layer | 🔲 Not started | — |
+| Load layer | 🔲 Not started | — |
 
 ## Database Setup
 
